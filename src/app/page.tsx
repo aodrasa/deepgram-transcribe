@@ -5,9 +5,6 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Mic, MicOff } from 'lucide-react'
 
-// Replace with your actual Deepgram API key
-const DEEPGRAM_API_KEY = 'f280117449140f611ffefddc5af84b9d2d886b2a'
-
 export default function Component() {
   const [isRecording, setIsRecording] = useState(false)
   const [transcript, setTranscript] = useState('')
@@ -34,7 +31,7 @@ export default function Component() {
 
       socketRef.current = new WebSocket('wss://api.deepgram.com/v1/listen', [
         'token',
-        DEEPGRAM_API_KEY,
+        process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY as string,
       ])
 
       socketRef.current.onopen = () => {
