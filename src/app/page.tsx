@@ -4,19 +4,28 @@ import { useState, useRef, useEffect } from 'react'
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Mic, MicOff } from 'lucide-react'
+import { createClient, type ListenLiveClient } from '@deepgram/sdk'
+
+interface TranscriptResponse {
+  channel: {
+    alternatives: Array<{
+      transcript: string
+    }>
+  }
+}
 
 export default function Component() {
   const [isRecording, setIsRecording] = useState(false)
   const [transcript, setTranscript] = useState('')
   const [error, setError] = useState<string | null>(null)
 
-  const socketRef = useRef<WebSocket | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const deepgramLiveRef = useRef<ListenLiveClient | null>(null)
 
   useEffect(() => {
     return () => {
-      if (socketRef.current) {
-        socketRef.current.close()
+      if (deepgramLiveRef.current) {
+        deepgramLiveRef.current.finish()
       }
       if (mediaRecorderRef.current) {
         mediaRecorderRef.current.stop()
@@ -26,48 +35,62 @@ export default function Component() {
 
   const startRecording = async () => {
     try {
+      console.log('Starting recording...')
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       mediaRecorderRef.current = new MediaRecorder(stream)
 
-      socketRef.current = new WebSocket('wss://api.deepgram.com/v1/listen', [
-        'token',
-        process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY as string,
-      ])
+      const deepgram = createClient(process.env.NEXT_PUBLIC_DEEPGRAM_API_KEY as string)
+      console.log('Created Deepgram client')
+      
+      deepgramLiveRef.current = deepgram.listen.live({
+        language: 'en',
+        smart_format: true,
+        model: 'nova-2',
+        punctuate: true,
+        interim_results: false
+      })
 
-      socketRef.current.onopen = () => {
-        console.log('WebSocket connection established')
-        setIsRecording(true)
-        setError(null)
+      if (deepgramLiveRef.current) {
+        console.log('Setting up Deepgram event listeners...')
+        
+        deepgramLiveRef.current.on('open', () => {
+          console.log('Deepgram connection established')
+          setIsRecording(true)
+          setError(null)
 
-        mediaRecorderRef.current!.ondataavailable = (event) => {
-          if (event.data.size > 0 && socketRef.current?.readyState === WebSocket.OPEN) {
-            socketRef.current.send(event.data)
+          if (mediaRecorderRef.current) {
+            console.log('Setting up MediaRecorder...')
+            mediaRecorderRef.current.ondataavailable = (event) => {
+              if (event.data.size > 0 && deepgramLiveRef.current) {
+                console.log('Sending audio data to Deepgram, size:', event.data.size)
+                deepgramLiveRef.current.send(event.data)
+              }
+            }
+            mediaRecorderRef.current.start(250)
+            console.log('MediaRecorder started')
           }
-        }
+        })
 
-        mediaRecorderRef.current!.start(250)
+        deepgramLiveRef.current.on('Results', (message: TranscriptResponse) => {
+          console.log('Received transcript:', message)
+          const transcript = message.channel?.alternatives[0]?.transcript
+          if (transcript) {
+            console.log('Setting transcript:', transcript)
+            setTranscript((prev) => `${prev} ${transcript}`.trim())
+          }
+        })
+
+        deepgramLiveRef.current.on('error', (error) => {
+          console.error('Deepgram error:', error)
+          setError('Transcription error occurred')
+        })
+
+        deepgramLiveRef.current.on('close', () => {
+          console.log('Deepgram connection closed')
+          setIsRecording(false)
+        })
       }
 
-      socketRef.current.onmessage = (message) => {
-        const received = JSON.parse(message.data)
-        const transcript = received.channel.alternatives[0].transcript
-        if (transcript) {
-          setTranscript((prev) => prev + ' ' + transcript)
-        }
-      }
-
-      socketRef.current.onerror = (error) => {
-        console.error('WebSocket error:', error)
-        setError('WebSocket error occurred')
-      }
-
-      socketRef.current.onclose = (event) => {
-        console.log('WebSocket connection closed:', event.code, event.reason)
-        setIsRecording(false)
-        if (event.code !== 1000) {
-          setError(`WebSocket closed unexpectedly: ${event.code} ${event.reason}`)
-        }
-      }
     } catch (err) {
       console.error('Error accessing microphone:', err)
       setError('Error accessing microphone')
@@ -75,11 +98,14 @@ export default function Component() {
   }
 
   const stopRecording = () => {
+    console.log('Stopping recording...')
     if (mediaRecorderRef.current) {
       mediaRecorderRef.current.stop()
+      console.log('MediaRecorder stopped')
     }
-    if (socketRef.current) {
-      socketRef.current.close(1000, 'Stop recording requested')
+    if (deepgramLiveRef.current) {
+      deepgramLiveRef.current.finish()
+      console.log('Deepgram connection finished')
     }
     setIsRecording(false)
   }
