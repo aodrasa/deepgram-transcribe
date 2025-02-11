@@ -79,7 +79,7 @@ export default function Component() {
       mediaRecorderRef.current.stop()
     }
     if (socketRef.current) {
-      socketRef.current.close()
+      socketRef.current.close(1000, 'Stop recording requested')
     }
     setIsRecording(false)
   }
